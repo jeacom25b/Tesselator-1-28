@@ -368,8 +368,8 @@ class SurfaceParticleSystem:
                     valid = True
                     for neighbor in grid.test_sphere(location, particle.radius * 0.7, exclude=(particle,)):
                         if not neighbor.tag in {"SHARP", "GREASE"}:
-                            neighbor.co += location
-                            neighbor.co /= 2
+                            neighbor.co += location * 0.333
+                            neighbor.co /= 1.333
                             grid.update(neighbor)
                         valid = False
                         break
