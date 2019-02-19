@@ -74,6 +74,7 @@ void main()
 }   
 """
 
+
 class DrawCallback:
     def __init__(self):
         # Useful for rendering in the same space of an object

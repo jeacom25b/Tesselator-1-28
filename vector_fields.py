@@ -1,3 +1,23 @@
+'''
+Copyright (C) 2018 Jean Da Costa machado.
+Jean3dimensional@gmail.com
+
+Created by Jean Da Costa machado
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+'''
+
 import bpy
 import bmesh
 import numpy as np
@@ -64,7 +84,8 @@ def random_tangent_vector(normal):
 
 
 def vert_normal(vert):
-        return vert.normal
+    return vert.normal
+
 
 def normalize_vectors_array(arr):
     magnitudes = np.sqrt((arr ** 2).sum(axis=1))
@@ -99,7 +120,7 @@ def hex_symmetry_space(vec, normal):
 
 
 class Field:
-    def __init__(self, obj, max_adjacent=50):
+    def __init__(self, obj, max_adjacent=20):
 
         self.matrix = obj.matrix_world.copy()
         self.draw = DrawCallback()
@@ -134,7 +155,7 @@ class Field:
             self.normals[i] = vert_normal(vert)
             self.scale[i] = vert[mask_layer]
             self.curvature[i] = average_curvature(vert)
-            self.adjacent_counts[i] = len(vert.link_edges)
+            self.adjacent_counts[i] = min(len(vert.link_edges), max_adjacent)
             if vert.is_boundary:
                 self.weights[vert.index] = 0
             for j, e in enumerate(vert.link_edges):
@@ -291,6 +312,7 @@ class Field:
         else:
             symmetry = symmetry_space
         cache = {}
+
         def symmetry_cached(vert):
             if vert in cache:
                 return cache[vert]

@@ -1,3 +1,23 @@
+'''
+Copyright (C) 2018 Jean Da Costa machado.
+Jean3dimensional@gmail.com
+
+Created by Jean Da Costa machado
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+'''
+
 import bpy
 import math
 from itertools import product
@@ -9,6 +29,8 @@ from mathutils.kdtree import KDTree
 from mathutils.bvhtree import BVHTree
 import bmesh
 import numpy as np
+from .interface import DebugText
+import traceback
 
 
 def subdivide_split_triangles(bm):
@@ -346,10 +368,10 @@ class SurfaceParticleSystem:
                     valid = True
                     for neighbor in grid.test_sphere(location, particle.radius * 0.7, exclude=(particle,)):
                         if not neighbor.tag in {"SHARP", "GREASE"}:
-                            neighbor.co += location * 0.34
-                            neighbor.co /= 1.34
+                            neighbor.co += location
+                            neighbor.co /= 2
                             grid.update(neighbor)
-                            valid = False
+                        valid = False
                         break
 
                     if valid:
@@ -449,7 +471,6 @@ class SurfaceParticleSystem:
         self.draw.point_size = 8
         for particle in self.particles:
             self.draw.add_point(particle.co, particle.color)
-            self.draw.add_line(particle.co, particle.co + (particle.dir * particle.radius), color1=particle.color)
         self.draw.update_batch()
 
     def create_mesh(self, bm, sharp_angle=0.52):
@@ -860,6 +881,8 @@ class ParticleRemesh(bpy.types.Operator):
         bmesh.ops.holes_fill(bm, edges=bm.edges)
         bmesh.ops.triangulate(bm, faces=bm.faces)
         bm.to_mesh(obj.data)
+
+        DebugText.lines = ["Decimating mesh."]
         yield
 
         model_size = max(context.active_object.dimensions)
@@ -892,6 +915,9 @@ class ParticleRemesh(bpy.types.Operator):
             for axis in range(3):
                 if self.mirror_axes[axis]:
                     self.particle_manager.field.mirror(axis)
+
+            DebugText.lines = ["Creating Cross Field",
+                               f"Step: {i}"]
             yield
 
         self.particle_manager.field.preview()
@@ -905,13 +931,16 @@ class ParticleRemesh(bpy.types.Operator):
         if len(self.particle_manager.particles) == 0:
             self.particle_manager.curvature_spawn_particles(5)
 
-        for i in self.particle_manager.spread_particles():
+        for i, _ in enumerate(self.particle_manager.spread_particles()):
             self.particle_manager.draw_particles()
+            DebugText.lines = [f"Propagating particles {('.', '..', '...')[i % 3]}"]
             yield
 
-        for i in self.particle_manager.repeal_particles(iterations=self.relaxation_steps,
-                                                        factor=self.particle_relaxation):
+        for i, _ in enumerate(self.particle_manager.repeal_particles(iterations=self.relaxation_steps,
+                                                                     factor=self.particle_relaxation)):
             self.particle_manager.draw_particles()
+            DebugText.lines = ["Particle relaxation:",
+                               f"Step {i}"]
             yield
 
         for i in range(3):
@@ -919,6 +948,9 @@ class ParticleRemesh(bpy.types.Operator):
                 self.particle_manager.mirror_particles(axis=i)
                 print("Mirror")
         self.particle_manager.draw_particles()
+
+        DebugText.lines = ["Tesselating."]
+        yield
 
         bm, bvh = self.particle_manager.create_mesh(bm, self.sharp_angle)
         if self.polygon_mode == "QUADS":
@@ -952,6 +984,7 @@ class ParticleRemesh(bpy.types.Operator):
                 relax_topology(bm)
                 bvh_snap(bvh, bm.verts)
             bm.to_mesh(obj.data)
+
         yield True
 
     @classmethod
@@ -976,6 +1009,7 @@ class ParticleRemesh(bpy.types.Operator):
             self.particle_manager.draw.remove_handler()
             self.particle_manager.field.draw.remove_handler()
             context.window_manager.event_timer_remove(self._timer)
+            DebugText.lines = {}
             return {"CANCELLED"}
 
         return {"PASS_THROUGH"}

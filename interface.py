@@ -1,6 +1,35 @@
+'''
+Copyright (C) 2018 Jean Da Costa machado.
+Jean3dimensional@gmail.com
+
+Created by Jean Da Costa machado
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+'''
+
 import bpy
 import math
 from .multifile import register_class, register_function, unregister_function
+
+
+class DebugText:
+    lines = []
+
+    @classmethod
+    def draw(cls, layout):
+        for line in cls.lines:
+            layout.label(text=line)
 
 
 @register_class
@@ -122,6 +151,10 @@ class TESSELATOR_PT_Panel(bpy.types.Panel):
         settings = context.scene.tesselator_settings
         layout = self.layout
 
+        if DebugText.lines:
+            DebugText.draw(layout)
+            return
+
         op = layout.operator("tesselator.remesh")
         op.polygon_mode = settings.polygon_mode
         op.sharp_angle = settings.sharp_angle
@@ -178,7 +211,6 @@ class TESSELATOR_PT_Panel(bpy.types.Panel):
             row.label(text=text)
             row.prop(settings, "field_smoothing_depth", text="", index=i)
             row.prop(settings, "field_smoothing_iterations", text="", index=i)
-
 
 
 @register_function
