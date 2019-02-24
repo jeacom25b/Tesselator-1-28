@@ -42,6 +42,25 @@ void main()
 }
 
 '''
+
+point_vertex_shader = '''
+
+uniform mat4 ModelViewProjectionMatrix;
+
+in vec3 pos;
+in vec4 color;
+
+out vec4 finalColor;
+
+void main()
+{
+    gl_Position = ModelViewProjectionMatrix * vec4(pos, 1.0);
+    gl_Position.z -= 0.002;
+    finalColor = color;
+}
+
+'''
+
 fragment_shader = """
 in vec4 finalColor;
 in vec4 fragCoord;
@@ -95,7 +114,7 @@ class DrawCallback:
         self.point_coords = []
         self.point_colors = []
         self._line_shader = gpu.types.GPUShader(vertex_shader, fragment_shader)
-        self._point_shader = gpu.types.GPUShader(vertex_shader, point_fragment_shader)
+        self._point_shader = gpu.types.GPUShader(point_vertex_shader, point_fragment_shader)
         self._line_batch = batch_for_shader(self._line_shader, 'LINES',
                                             {"pos": self.line_coords, "color": self.line_colors})
         self._point_batch = batch_for_shader(self._line_shader, 'POINTS',

@@ -30,6 +30,7 @@ from mathutils.bvhtree import BVHTree
 import bmesh
 import numpy as np
 from .interface import DebugText
+import random
 import traceback
 
 
@@ -72,7 +73,7 @@ def relax_topology(bm):
         avg /= n
         avg -= vert.co
         avg -= vert.normal * vert.normal.dot(avg)
-        vert.co += avg
+        vert.co += avg * 0.5
 
 
 def straigthen_quad_topology(bm):
@@ -194,7 +195,7 @@ class SpatialHash:
 
 class Particle:
     def __init__(self, location, normal, bvh_tree=None):
-        self.color = (1, 0, 0, 1)
+        self.color = Vector((1, 0, 0, 1))
         self.radius = 0
         self.co = location
         self.normal = normal
@@ -202,7 +203,15 @@ class Particle:
         self.dir = Vector((1, 0, 0))
         self.field = None
         self.parent = None
-        self.tag = 0
+        self.tag = "PARTICLE"
+        self.tag_number = 0
+        self.accumulation = location
+        self.accumulation_counts = 1
+
+    def add_location_sample(self, co, w=0.3):
+        self.accumulation += co * w
+        self.accumulation_counts += w
+        self.co = self.accumulation / self.accumulation_counts
 
 
 class SurfaceParticleSystem:
@@ -249,8 +258,8 @@ class SurfaceParticleSystem:
                             valid = False
                     if valid:
                         p = self.new_particle(co)
-                        # p.tag = "GREASE"
-                        # p.color = (0, 1, 0, 1)
+                        p.tag = "GREASE"
+                        p.color = Vector((0, 1, 0, 1))
 
     def singularity_spawn_particles(self):
         r = max(self.particle_size, self.particle_size_mask)
@@ -258,19 +267,30 @@ class SurfaceParticleSystem:
             valid = True
             for particle in self.grid.test_sphere(singularity, r):
                 d = particle.co - singularity
-                if d.length < particle.radius:
+                if d.length < particle.radius * 3:
                     break
             if valid:
                 self.new_particle(singularity)
 
     def sharp_edge_spawn_particles(self, source_bm, sharp_angle=0.523599):
+
+        def sharp_particle_from_vert(vert):
+            p = self.new_particle(vert.co)
+            p.tag = "SHARP"
+            p.normal = vert.normal
+            p.dir = p.dir - p.normal * p.dir.dot(p.normal)
+            p.color = Vector((0, 1, 0, 1))
+
         new_bm = bmesh.new()
         for edge in source_bm.edges:
             if edge.calc_face_angle(0) > sharp_angle or edge.is_boundary:
                 verts = [new_bm.verts.new(vert.co) for vert in edge.verts]
                 new_bm.edges.new(verts)
+        bmesh.ops.remove_doubles(new_bm,
+                                 verts=new_bm.verts,
+                                 dist=min(self.particle_size, self.particle_size_mask) * 0.001)
 
-        n = 3
+        n = 10
         while True:
             subdivide = []
             for edge in new_bm.edges:
@@ -284,13 +304,12 @@ class SurfaceParticleSystem:
             n -= 1
             bmesh.ops.subdivide_edges(new_bm, edges=subdivide, cuts=1)
 
+        if "out" in bpy.context.scene.objects:
+            new_bm.to_mesh(bpy.context.scene.objects["out"].data)
+
         for vert in new_bm.verts:
             if vert.calc_edge_angle(0) > sharp_angle or len(vert.link_edges) > 2:
-                p = self.new_particle(vert.co)
-                p.tag = "SHARP"
-                p.normal = vert.normal
-                p.dir = p.dir - p.normal * p.dir.dot(p.normal)
-                p.color = (0, 1, 0, 1)
+                sharp_particle_from_vert(vert)
 
         dir = Vector(np.random.sample((3,))).normalized()
 
@@ -303,13 +322,9 @@ class SurfaceParticleSystem:
                 break
 
             if valid:
-                p = self.new_particle(vert.co, dir)
-                p.tag = "SHARP"
-                p.normal = vert.normal
-                p.dir = p.dir - p.normal * p.dir.dot(p.normal)
-                p.color = (0, 1, 0, 1)
+                sharp_particle_from_vert(vert)
 
-    def spread_particles(self):
+    def spread_particles(self, relaxation=3, factor=0.5):
         grid = self.grid
         current_front = list(self.particles)
         while len(current_front) > 0:
@@ -320,6 +335,9 @@ class SurfaceParticleSystem:
                     remove = False
                     for intruder in grid.test_sphere(particle.co, particle.radius * 0.7, exclude=(particle,)):
                         if intruder.tag in {"SHARP", "GREASE"}:
+                            remove = True
+                            break
+                        elif (particle.co - intruder.co).length_squared < (particle.radius + intruder.radius) ** 2 / 10:
                             remove = True
                             break
                     if remove:
@@ -367,9 +385,10 @@ class SurfaceParticleSystem:
 
                     valid = True
                     for neighbor in grid.test_sphere(location, particle.radius * 0.7, exclude=(particle,)):
-                        if not neighbor.tag in {"SHARP", "GREASE"}:
-                            neighbor.co += location * 0.333
-                            neighbor.co /= 1.333
+                        if not neighbor.tag in {"SHARP", "GREASE"} and not neighbor is particle.parent:
+                            # neighbor.co += location * 0.3
+                            # neighbor.co /= 1.3
+                            neighbor.add_location_sample(location, w=factor)
                             grid.update(neighbor)
                         valid = False
                         break
@@ -382,6 +401,16 @@ class SurfaceParticleSystem:
                         p.parent = particle
                         grid.insert(p)
                         new_front.append(p)
+
+                location, normal, dir, _, _ = self.field.sample_point(particle.co)
+                particle.co = location
+                particle.normal = normal
+                particle.dir = dir
+                grid.update(particle)
+                if particle.tag_number < relaxation:
+                    new_front.append(particle)
+                    particle.tag_number += 1
+
             current_front = new_front
 
         # particles = list(self.particles)
@@ -407,24 +436,29 @@ class SurfaceParticleSystem:
             for index, particle in enumerate(particles):
                 if particle.tag in {"SHARP", "GREASE"}:
                     continue
+
                 d = Vector()
-                for loc, other_index, dist in tree.find_n(particle.co, 9):
+
+                for loc, other_index, dist in tree.find_n(particle.co, 5):
                     if dist == 0:
                         continue
                     other = particles[other_index]
-                    v = particle.co - other.co
-                    d += v.normalized() / (dist * dist)
-                    if not self.triangle_mode:
-                        u = other.dir * other.radius * 0.5
-                        v = u.cross(other.normal)
-                        for vec in ((u + v), (u - v), (-u + v), (-u - v)):
-                            vec += other.co
-                            vec -= particle.co
-                            dist = vec.length_squared
-                            vec.normalize()
-                            d -= (vec / dist) * 0.15
-                d.normalize()
+                    vec = particle.co - other.co
 
+                    d += (vec.normalized() / (dist * dist))
+
+                    if not self.triangle_mode:
+                        vecs = vector_fields.symmetry_space(particle.dir, particle.normal)
+                        vec = vector_fields.best_matching_vector(vecs, vec)
+                        vec *= (particle.radius + other.radius) / 2
+                        # loc, _, _, _, _ = self.field.sample_point(particle.co + vec)
+                        # vec = loc - particle.co
+
+                        vec += other.co
+                        vec -= particle.co
+                        d += vec
+
+                d.normalize()
                 location, normal, dir, s, c = self.field.sample_point(particle.co + (d * factor * particle.radius))
                 if location:
                     particle.co = location
@@ -435,6 +469,7 @@ class SurfaceParticleSystem:
                 new_tree.insert(particle.co, index)
             new_tree.balance()
             tree = new_tree
+
             yield i
 
     def mirror_particles(self, axis):
@@ -465,12 +500,14 @@ class SurfaceParticleSystem:
     def remove_particle(self, particle):
         self.particles.remove(particle)
         self.grid.remove(particle)
+        particle.tag = "REMOVED"
 
-    def draw_particles(self):
+    def draw_particles(self, relaxation_steps=3):
         self.draw.clear_data()
         self.draw.point_size = 8
         for particle in self.particles:
-            self.draw.add_point(particle.co, particle.color)
+            self.draw.add_point(particle.co,
+                                particle.color * (particle.tag_number / relaxation_steps))
         self.draw.update_batch()
 
     def create_mesh(self, bm, sharp_angle=0.52):
@@ -509,7 +546,11 @@ class SurfaceParticleSystem:
 
         bvh = BVHTree.FromBMesh(bm)
 
+        sharp = 20
+        smooth = 10
+
         particles = np.array([particle.co for particle in self.particles], dtype=np.float64, ndmin=2)
+        weights = np.array([smooth if particle.tag == "SHARP" else sharp for particle in self.particles], dtype=np.int8)
         locations = np.array([vert.co for vert in bm.verts], dtype=np.float64, ndmin=2)
         particles_mapping = np.full((n,), -1, dtype=np.int64)
 
@@ -550,13 +591,13 @@ class SurfaceParticleSystem:
                 edges[vert.index][i] = other.index
 
         ids = np.arange(n)
-        for i in range(10):
+        for i in range(30):
             cols = np.random.randint(0, edges_limit) % edges_count
             edge_indexes = edges[ids, cols]
             edge_mappings = particles_mapping[edge_indexes]
-            distance = ((particles[particles_mapping] - locations) ** 2).sum(axis=1)
-            edge_distnace = ((particles[edge_mappings] - locations) ** 2).sum(axis=1)
-            particles_mapping = np.where(edge_distnace > distance, particles_mapping, edge_mappings)
+            distance = ((particles[particles_mapping] - locations) ** 2).sum(axis=1) * weights[particles_mapping]
+            edge_distance = ((particles[edge_mappings] - locations) ** 2).sum(axis=1) * weights[edge_mappings]
+            particles_mapping = np.where(edge_distance > distance, particles_mapping, edge_mappings)
 
         # ==========================================================================================
 
@@ -606,6 +647,15 @@ class SurfaceParticleSystem:
 
         # ==========================================================================================
 
+        if sharp_angle < math.pi:
+            crease = new_bm.edges.layers.crease.verify()
+            for edge in new_bm.edges:
+                if edge.calc_face_angle(0) > sharp_angle:
+                    edge[crease] = 1.0
+                    edge.seam = True
+
+        # ==========================================================================================
+
         if not self.triangle_mode:
             for i in range(2):
                 stop = True
@@ -616,28 +666,28 @@ class SurfaceParticleSystem:
                 relax_topology(new_bm)
                 bvh_snap(source_bvh, new_bm.verts)
 
-                dissolve = []
-                for vert in new_bm.verts:
-                    le = len(vert.link_edges)
-                    one_ring_signature = tuple(sorted(len(face.verts) for face in vert.link_faces))
+                # dissolve = []
+                # for vert in new_bm.verts:
+                #     le = len(vert.link_edges)
+                #     one_ring_signature = tuple(sorted(len(face.verts) for face in vert.link_faces))
+                #
+                #     if le == 3 and one_ring_signature in ((3, 4, 4), (3, 3, 4)):
+                #         dissolve.append(vert)
+                #         stop = False
+                # bmesh.ops.dissolve_verts(new_bm, verts=dissolve)
 
-                    if le == 3 and one_ring_signature in ((3, 4, 4), (3, 3, 4)):
-                        dissolve.append(vert)
-                        stop = False
-                bmesh.ops.dissolve_verts(new_bm, verts=dissolve)
+                # subdivide_edges = []
+                # for vert in new_bm.verts:
+                #     le = len(vert.link_edges)
+                #     one_ring_signature = tuple(sorted(len(face.verts) for face in vert.link_faces))
+                #
+                #     if le > 5 and one_ring_signature.count(3) > 1:
+                #         longest_edge = max(vert.link_edges,
+                #                            key=lambda e: (e.verts[0].co - e.verts[1].co).length_squared)
+                #         subdivide_edges.append(longest_edge)
+                #         stop = False
 
-                subdivide_edges = []
-                for vert in new_bm.verts:
-                    le = len(vert.link_edges)
-                    one_ring_signature = tuple(sorted(len(face.verts) for face in vert.link_faces))
-
-                    if le > 5 and one_ring_signature.count(3) > 1:
-                        longest_edge = max(vert.link_edges,
-                                           key=lambda e: (e.verts[0].co - e.verts[1].co).length_squared)
-                        subdivide_edges.append(longest_edge)
-                        stop = False
-
-                bmesh.ops.subdivide_edges(new_bm, edges=list(set(subdivide_edges)))
+                # bmesh.ops.subdivide_edges(new_bm, edges=list(set(subdivide_edges)))
                 bmesh.ops.triangulate(new_bm, faces=new_bm.faces, quad_method="SHORT_EDGE")
 
                 if stop:
@@ -649,67 +699,60 @@ class SurfaceParticleSystem:
 
             # ==========================================================================================
 
-            merge_hints = {
-                (5, 3, 5, 3), (3, 5, 3, 5),
-                (4, 3, 4, 3), (3, 4, 3, 4),
-                (5, 3, 4, 3), (3, 5, 3, 4), (4, 3, 5, 3), (3, 4, 3, 5)
-            }
-            merge_map = {}
-            seen_verts = set()
-            for face in new_bm.faces:
-                face_signature = tuple((len(vert.link_edges) for vert in face.verts))
-                if face_signature in merge_hints:
-                    loop = [loop for loop in face.loops if len(loop.vert.link_edges) == 3][0]
-                    vert0 = loop.vert
-                    vert1 = loop.link_loop_next.link_loop_next.vert
-                    co = (vert0.co + vert1.co) / 2
-                    vert0.co, vert1.co = co, co
-                    verts = {vert0, vert1}
-                    if not verts & seen_verts:
-                        seen_verts |= verts
-                        merge_map[vert0] = vert1
-            bmesh.ops.weld_verts(new_bm, targetmap=merge_map)
+            # merge_hints = {
+            #     (5, 3, 5, 3), (3, 5, 3, 5),
+            #     (4, 3, 4, 3), (3, 4, 3, 4),
+            #     (5, 3, 4, 3), (3, 5, 3, 4), (4, 3, 5, 3), (3, 4, 3, 5)
+            # }
+            # merge_map = {}
+            # seen_verts = set()
+            # for face in new_bm.faces:
+            #     face_signature = tuple((len(vert.link_edges) for vert in face.verts))
+            #     if face_signature in merge_hints:
+            #         loop = [loop for loop in face.loops if len(loop.vert.link_edges) == 3][0]
+            #         vert0 = loop.vert
+            #         vert1 = loop.link_loop_next.link_loop_next.vert
+            #         co = (vert0.co + vert1.co) / 2
+            #         vert0.co, vert1.co = co, co
+            #         verts = {vert0, vert1}
+            #         if not verts & seen_verts:
+            #             seen_verts |= verts
+            #             merge_map[vert0] = vert1
+            # bmesh.ops.weld_verts(new_bm, targetmap=merge_map)
 
             # ==========================================================================================
 
-            faces = []
-            for face in new_bm.faces:
-                tri_count = 0
-                for edge in face.edges:
-                    for possible_tri in edge.link_faces:
-                        if possible_tri is not face and len(possible_tri.verts) == 3:
-                            tri_count += 1
-                if tri_count == 3:
-                    faces.append(face)
-            bmesh.ops.poke(new_bm, faces=faces)
-            bmesh.ops.join_triangles(new_bm, faces=new_bm.faces, angle_face_threshold=sharp_angle,
-                                     angle_shape_threshold=3.14,
-                                     cmp_seam=True)
+            # faces = []
+            # for face in new_bm.faces:
+            #     tri_count = 0
+            #     for edge in face.edges:
+            #         for possible_tri in edge.link_faces:
+            #             if possible_tri is not face and len(possible_tri.verts) == 3:
+            #                 tri_count += 1
+            #     if tri_count == 3:
+            #         faces.append(face)
+            # bmesh.ops.poke(new_bm, faces=faces)
+            # bmesh.ops.join_triangles(new_bm, faces=new_bm.faces, angle_face_threshold=sharp_angle,
+            #                          angle_shape_threshold=3.14,
+            #                          cmp_seam=True)
 
             # ==========================================================================================
 
-            collapse = []
-            seen_verts = set()
-            for edge in new_bm.edges:
-                tri_count = 0
-                for face in edge.link_faces:
-                    if len(face.verts) == 3:
-                        tri_count += 1
-                if tri_count == 2:
-                    verts = set(edge.verts)
-                    if not verts & seen_verts:
-                        collapse.append(edge)
-                        seen_verts |= verts
-            bmesh.ops.collapse(new_bm, edges=collapse)
+            # collapse = []
+            # seen_verts = set()
+            # for edge in new_bm.edges:
+            #     tri_count = 0
+            #     for face in edge.link_faces:
+            #         if len(face.verts) == 3:
+            #             tri_count += 1
+            #     if tri_count == 2:
+            #         verts = set(edge.verts)
+            #         if not verts & seen_verts:
+            #             collapse.append(edge)
+            #             seen_verts |= verts
+            # bmesh.ops.collapse(new_bm, edges=collapse)
 
         # ==========================================================================================
-
-        if sharp_angle < math.pi:
-            crease = new_bm.edges.layers.crease.verify()
-            for edge in new_bm.edges:
-                if edge.verts[0].tag and edge.verts[1].tag or edge.calc_face_angle(0) > sharp_angle:
-                    edge[crease] = 1.0
-                    edge.seam = True
 
         relax_topology(new_bm)
         bvh_snap(source_bvh, new_bm.verts)
@@ -728,15 +771,15 @@ class ParticleRemesh(bpy.types.Operator):
         name="Relaxation Factor",
         description="Relaxates points after placement",
         min=0.0001,
-        max=0.5,
-        default=0.05
+        max=2,
+        default=0.5
     )
 
     relaxation_steps: bpy.props.IntProperty(
         name="Relaxation Steps",
         description="Amount of smoothing steps applied to the particles.",
-        min=0,
-        default=4
+        min=1,
+        default=3
     )
 
     resolution: bpy.props.FloatProperty(
@@ -917,7 +960,7 @@ class ParticleRemesh(bpy.types.Operator):
                     self.particle_manager.field.mirror(axis)
 
             DebugText.lines = ["Creating Cross Field",
-                               f"Step: {i}"]
+                               f"Step: {i + 1}"]
             yield
 
         self.particle_manager.field.preview()
@@ -925,23 +968,24 @@ class ParticleRemesh(bpy.types.Operator):
         if self.sharp_angle < math.pi:
             self.particle_manager.sharp_edge_spawn_particles(bm, self.sharp_angle)
 
-        self.particle_manager.field.detect_singularities()
-        self.particle_manager.singularity_spawn_particles()
+        if len(self.particle_manager.particles) == 0:
+            self.particle_manager.field.detect_singularities()
+            self.particle_manager.singularity_spawn_particles()
 
         if len(self.particle_manager.particles) == 0:
             self.particle_manager.curvature_spawn_particles(5)
 
-        for i, _ in enumerate(self.particle_manager.spread_particles()):
-            self.particle_manager.draw_particles()
+        for i, _ in enumerate(self.particle_manager.spread_particles(self.relaxation_steps, self.particle_relaxation)):
+            self.particle_manager.draw_particles(self.relaxation_steps)
             DebugText.lines = [f"Propagating particles {('.', '..', '...')[i % 3]}"]
             yield
 
-        for i, _ in enumerate(self.particle_manager.repeal_particles(iterations=self.relaxation_steps,
-                                                                     factor=self.particle_relaxation)):
-            self.particle_manager.draw_particles()
-            DebugText.lines = ["Particle relaxation:",
-                               f"Step {i}"]
-            yield
+        # for i, _ in enumerate(self.particle_manager.repeal_particles(iterations=self.relaxation_steps,
+        #                                                              factor=self.particle_relaxation)):
+        #     self.particle_manager.draw_particles()
+        #     DebugText.lines = ["Particle relaxation:",
+        #                        f"Step {i + 1}"]
+        #     yield
 
         for i in range(3):
             if self.mirror_axes[i]:

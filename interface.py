@@ -38,15 +38,15 @@ class TesselatorSettings(bpy.types.PropertyGroup):
         name="Relaxation Factor",
         description="Relaxates points after placement",
         min=0.0001,
-        max=0.5,
-        default=0.05
+        max=2,
+        default=0.5
     )
 
     relaxation_steps: bpy.props.IntProperty(
         name="Relaxation Steps",
         description="Amount of smoothing steps applied to the particles.",
-        min=0,
-        default=4
+        min=1,
+        default=3
     )
 
     resolution: bpy.props.FloatProperty(
@@ -88,7 +88,7 @@ class TesselatorSettings(bpy.types.PropertyGroup):
 
     field_resolution: bpy.props.IntProperty(
         name="Field Resolution",
-        description="Maximum amount of verts the guiding field should have.",
+        description="Maximum amount of verts the guiding field should have. Increase to make topology more complex",
         min=100,
         default=8000
     )
@@ -97,9 +97,10 @@ class TesselatorSettings(bpy.types.PropertyGroup):
         name="Field Sampling Method",
         description="Precision level of sampling",
         items=[
-            ("EULER", "Euler", "Super fast and simple"),
-            ("MIDPOINT", "Midpoint", "Fast and precise"),
-            ("RUNGE_KUTTA", "Runge-Kutta Order 4", "Slow but super precise")
+            ("EULER", "Euler", "Better suited to simpler meshes, very fast."),
+            ("MIDPOINT", "Midpoint", "General purpose, slightly slower than Euler"),
+            ("RUNGE_KUTTA", "Runge-Kutta Order 4", "Slow but snaps particles to edges and aligns better the topology,"
+                                                   "better suited for preserving sharp features.")
         ],
         default="MIDPOINT"
     )
@@ -115,7 +116,8 @@ class TesselatorSettings(bpy.types.PropertyGroup):
 
     field_smoothing_iterations: bpy.props.IntVectorProperty(
         name="Repeat",
-        description="Amount of smoothing iterations for each round,",
+        description="Amount of smoothing iterations for each round, the higher the values, the more smooth"
+                    "the results will be",
         size=3,
         min=0,
         default=(30, 30, 100),
@@ -123,7 +125,8 @@ class TesselatorSettings(bpy.types.PropertyGroup):
 
     field_smoothing_depth: bpy.props.IntVectorProperty(
         name="Distance",
-        description="Amount of random walk steps used to average the field for each round.",
+        description="Amount of random walk steps used to average the field for each round, higher values yield less"
+                    "complex curves",
         size=3,
         min=0,
         default=(20, 5, 0)

@@ -283,6 +283,35 @@ class Field:
 
         self.field = normalize_vectors_array(self.field)
 
+    def autoscale(self):
+        symmetry = hex_symmetry_space if self.hex_mode else symmetry_space
+
+        for vert in self.bm.verts:
+            u = Vector(self.field[vert.index])
+            v = u.cross(vert.normal)
+            ang = 0
+            last_vec = u
+            for loop in vert.link_loops:
+                vert1 = loop.link_loop_next.vert
+                vert2 = loop.link_loop_next.link_loop_next.vert
+                if not last_vec:
+                    vert1_vec = Vector(self.field[vert1.index])
+                else:
+                    vert1_vec = last_vec
+
+                vert2_vec = best_matching_vector(symmetry(self.field[vert2.index], vert2.normal), vert1_vec)
+
+                vert1_vec = Vector((vert1_vec.dot(u), vert1_vec.dot(v)))
+                vert2_vec = Vector((vert2_vec.dot(u), vert2_vec.dot(v)))
+
+                ang += vert1_vec.angle_signed(vert2_vec)
+            self.scale[vert.index] = ang
+        for i in range(20):
+            self.scale += self.scale[self.walk_edges(0)]
+            self.scale /= 2
+        self.scale -= self.scale.min()
+        self.scale /= self.scale.max()
+
     def mirror(self, axis=0):
         mirror_vec = Vector()
         mirror_vec[axis] = -1
@@ -294,23 +323,7 @@ class Field:
                 self.field[vert.index] = vec - vec.dot(mirror_vec) * 2 * mirror_vec
 
     def detect_singularities(self):
-        singularities = []
-        # for face in self.bm.faces:
-        #     v0 = face.verts[0]
-        #     v1 = face.verts[1]
-        #     v2 = face.verts[2]
-        #     vec0 = self.field[v0.index]
-        #     vec1 = best_matching_vector(symmetry_space(self.field[v1.index], v1.normal), vec0)
-        #     v2_symmetry = symmetry_space(self.field[v2.index], v2.normal)
-        #     match0 = best_matching_vector(v2_symmetry, vec0)
-        #     match1 = best_matching_vector(v2_symmetry, vec1)
-        #     if match0.dot(match1) < 0.5:
-        #         singularity_faces.append(face.calc_center_median())
-
-        if self.hex_mode:
-            symmetry = hex_symmetry_space
-        else:
-            symmetry = symmetry_space
+        symmetry = hex_symmetry_space if self.hex_mode else symmetry_space
         cache = {}
 
         def symmetry_cached(vert):
@@ -321,25 +334,40 @@ class Field:
                 cache[vert] = s
                 return s
 
-        for vert in self.bm.verts:
-            ang = 0
-            u = random_tangent_vector(vert.normal)
-            v = u.cross(vert.normal)
-            last_vec = None
-            for loop in vert.link_loops:
-                vert1 = loop.link_loop_next.vert
-                vert2 = loop.link_loop_next.link_loop_next.vert
-                if not last_vec:
-                    vert1_vec = symmetry_cached(vert1)[0]
-                else:
-                    vert1_vec = last_vec
-                vert2_vec = best_matching_vector(symmetry_cached(vert2), vert1_vec)
-                last_vec = vert2_vec
-                vert1_vec = Vector((vert1_vec.dot(u), vert1_vec.dot(v)))
-                vert2_vec = Vector((vert2_vec.dot(u), vert2_vec.dot(v)))
-                ang += vert1_vec.angle_signed(vert2_vec)
-            if ang > 0.5:
-                singularities.append(vert.co)
+        singularities = []
+
+        if not self.hex_mode:
+            for face in self.bm.faces:
+                v0 = face.verts[0]
+                v1 = face.verts[1]
+                v2 = face.verts[2]
+                vec0 = self.field[v0.index]
+                vec1 = best_matching_vector(symmetry_cached(v1), vec0)
+                v2_symmetry = symmetry_cached(v2)
+                match0 = best_matching_vector(v2_symmetry, vec0)
+                match1 = best_matching_vector(v2_symmetry, vec1)
+                if match0.dot(match1) < 0.5:
+                    singularities.append(face.calc_center_median())
+        else:
+            for vert in self.bm.verts:
+                ang = 0
+                u = random_tangent_vector(vert.normal)
+                v = u.cross(vert.normal)
+                last_vec = None
+                for loop in vert.link_loops:
+                    vert1 = loop.link_loop_next.vert
+                    vert2 = loop.link_loop_next.link_loop_next.vert
+                    if not last_vec:
+                        vert1_vec = symmetry_cached(vert1)[0]
+                    else:
+                        vert1_vec = last_vec
+                    vert2_vec = best_matching_vector(symmetry_cached(vert2), vert1_vec)
+                    last_vec = vert2_vec
+                    vert1_vec = Vector((vert1_vec.dot(u), vert1_vec.dot(v)))
+                    vert2_vec = Vector((vert2_vec.dot(u), vert2_vec.dot(v)))
+                    ang += vert1_vec.angle_signed(vert2_vec)
+                if ang > 0.9:
+                    singularities.append(vert.co)
 
         self.singularities = singularities
 
@@ -375,18 +403,20 @@ class Field:
     def preview(self):
         draw = self.draw
         draw.blend_mode = MULTIPLY_BLEND
-        draw.line_width = 1
+        draw.line_width = 1.5
         draw.point_size = 20
         draw.clear_data()
 
-        blue = Vector((0, 0, 1, 1))
+        blue = Vector((0.7, 0.7, 1, 1))
         red = Vector((1, 0, 0, 1))
         white = Vector((1, 1, 1, 1))
         for vert in self.bm.verts:
             fac = self.scale[vert.index]
             loc = vert.co
-            color = (fac ** 2, ((1 - fac) * 4 * fac), (1 - fac) ** 2, 1)
-            size = sum(edge.calc_length() for edge in vert.link_edges) / len(vert.link_edges) * 0.5
+            color = np.array((fac ** 2, ((1 - fac) * 4 * fac), (1 - fac) ** 2, 1))
+            color += 2
+            color /= 3
+            size = sum(edge.calc_length() for edge in vert.link_edges) / len(vert.link_edges)
             u = Vector(self.field[vert.index]) * size
             vecs = symmetry_space(u, vert.normal) if not self.hex_mode else hex_symmetry_space(u, vert.normal)
             for v in vecs:
@@ -429,13 +459,15 @@ class Field:
             wm = context.window_manager
             wm.modal_handler_add(self)
             self.field = Field(context.active_object)
-            # self.field.smooth(50, 20, 0.1)
-            # self.field.smooth(20, 5, 0)
-            self.field.initialize_from_gp(context)
+            self.field.hex_mode = True
+            self.field.smooth(20, 20, )
+            self.field.smooth(100, 0, 0)
+            self.field.autoscale()
+            # self.field.initialize_from_gp(context)
             self.field.weights *= 5
             self.field.weights = np.minimum(self.field.weights, 1)
             # self.field.smooth(50, 0)
-            # self.field.detect_singularities()
+            self.field.detect_singularities()
             self.field.preview()
             self.field.draw.setup_handler()
             return {"RUNNING_MODAL"}
@@ -445,11 +477,5 @@ class Field:
                 self.field.draw.remove_handler()
                 context.area.tag_redraw()
                 return {"FINISHED"}
-            if event.type == "R" and event.value == "PRESS":
-                self.field.smooth(20, 100)
-                self.field.smooth(30, 20)
-                self.field.smooth(100, 0)
-                self.field.preview()
-                return {"RUNNING_MODAL"}
 
             return {"PASS_THROUGH"}
