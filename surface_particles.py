@@ -116,12 +116,12 @@ def bvh_snap(bvh, verts):
         elif location1:
             final_co = location1
             if location3:
-                if distance3 * 1.2 < distance1:
+                if distance3 * 3 < distance1:
                     final_co = location3
         elif location2:
             final_co = location2
             if location3:
-                if distance3 * 1.2 < distance2:
+                if distance3 * 3 < distance2:
                     final_co = location3
         else:
             if location3:
@@ -337,7 +337,7 @@ class SurfaceParticleSystem:
                         if intruder.tag in {"SHARP", "GREASE"}:
                             remove = True
                             break
-                        elif (particle.co - intruder.co).length_squared < (particle.radius + intruder.radius) ** 2 / 10:
+                        elif (particle.co - intruder.co).length_squared < (particle.radius + intruder.radius) ** 2 / 4:
                             remove = True
                             break
                     if remove:
@@ -1010,7 +1010,7 @@ class ParticleRemesh(bpy.types.Operator):
                 bm.from_mesh(obj.data)
                 if i == 0:
                     straigthen_quad_topology(bm)
-                    relax_topology(bm)
+                    # relax_topology(bm)
                 bvh_snap(bvh, bm.verts)
                 bm.to_mesh(obj.data)
 
