@@ -207,11 +207,18 @@ class Particle:
         self.tag_number = 0
         self.accumulation = location
         self.accumulation_counts = 1
+        self.normal_accumulation = normal
+        self.normal_accumulation_counts = 1
 
     def add_location_sample(self, co, w=0.3):
         self.accumulation += co * w
         self.accumulation_counts += w
         self.co = self.accumulation / self.accumulation_counts
+
+    def add_normal_sample(self, n, w):
+        self.normal_accumulation += n * w
+        self.normal_accumulation_counts += w
+        self.normal = self.normal_accumulation / self.normal_accumulation_counts
 
 
 class SurfaceParticleSystem:
@@ -304,9 +311,6 @@ class SurfaceParticleSystem:
             n -= 1
             bmesh.ops.subdivide_edges(new_bm, edges=subdivide, cuts=1)
 
-        if "out" in bpy.context.scene.objects:
-            new_bm.to_mesh(bpy.context.scene.objects["out"].data)
-
         for vert in new_bm.verts:
             if vert.calc_edge_angle(0) > sharp_angle or len(vert.link_edges) > 2:
                 sharp_particle_from_vert(vert)
@@ -324,7 +328,7 @@ class SurfaceParticleSystem:
             if valid:
                 sharp_particle_from_vert(vert)
 
-    def spread_particles(self, relaxation=3, factor=0.5):
+    def propagate_particles(self, relaxation=3, factor=0.5):
         grid = self.grid
         current_front = list(self.particles)
         while len(current_front) > 0:
@@ -333,12 +337,16 @@ class SurfaceParticleSystem:
             for particle in current_front:
                 if particle.tag not in {"SHARP", "GREASE"}:
                     remove = False
-                    for intruder in grid.test_sphere(particle.co, particle.radius * 0.7, exclude=(particle,)):
-                        if intruder.tag in {"SHARP", "GREASE"}:
+                    for intruder in grid.test_sphere(particle.co, particle.radius * 1.5, exclude=(particle,)):
+                        avg_rad = (intruder.radius + particle.radius) * 0.5
+                        dist = (intruder.co - particle.co).length
+                        avg_loc = (intruder.co + particle.co) * 0.5
+                        if intruder.tag in {"SHARP", "GREASE"} and dist < avg_rad * 0.7:
                             remove = True
                             break
-                        elif (particle.co - intruder.co).length_squared < (particle.radius + intruder.radius) ** 2 / 4:
+                        elif dist < avg_rad * 0.5:
                             remove = True
+                            intruder.co = avg_loc
                             break
                     if remove:
                         self.remove_particle(particle)
@@ -353,15 +361,16 @@ class SurfaceParticleSystem:
 
                 for dir in vecs:
                     try:
+
                         if self.field_sampling_method == "EULER":
                             location, normal, dir, s, c = self.field.sample_point(particle.co + dir * particle.radius,
                                                                                   dir)
 
                         elif self.field_sampling_method == "MIDPOINT":
                             location, normal, dir, s, c = self.field.sample_point(
-                                particle.co + dir * particle.radius * 0.3, dir)
+                                particle.co + dir * particle.radius * 0.5, dir)
                             n = normal * particle.radius * 0.1 * (1 if c > 0 else -1)
-
+                            dir = (location - particle.co + (dir * particle.radius * 0.5)).normalized()
                             location, normal, dir2, s, c = self.field.sample_point(
                                 n + particle.co + dir * particle.radius, dir)
 
@@ -439,24 +448,23 @@ class SurfaceParticleSystem:
 
                 d = Vector()
 
-                for loc, other_index, dist in tree.find_n(particle.co, 5):
+                for loc, other_index, dist in tree.find_n(particle.co, 3):
                     if dist == 0:
                         continue
                     other = particles[other_index]
                     vec = particle.co - other.co
 
-                    d += (vec.normalized() / (dist * dist))
+                    d += (vec / (dist ** 3))
 
                     if not self.triangle_mode:
-                        vecs = vector_fields.symmetry_space(particle.dir, particle.normal)
-                        vec = vector_fields.best_matching_vector(vecs, vec)
-                        vec *= (particle.radius + other.radius) / 2
-                        # loc, _, _, _, _ = self.field.sample_point(particle.co + vec)
-                        # vec = loc - particle.co
-
-                        vec += other.co
-                        vec -= particle.co
-                        d += vec
+                        u = particle.dir
+                        v = u.cross(particle.normal)
+                        for vec in (u + v, u - v, -u + v, -u - v):
+                            vec *= particle.radius
+                            vec += other.co
+                            vec -= particle.co
+                            dist = vec.length
+                            d -= vec * 0.3 / (dist ** 3)
 
                 d.normalize()
                 location, normal, dir, s, c = self.field.sample_point(particle.co + (d * factor * particle.radius))
@@ -666,37 +674,6 @@ class SurfaceParticleSystem:
                 relax_topology(new_bm)
                 bvh_snap(source_bvh, new_bm.verts)
 
-                # dissolve = []
-                # for vert in new_bm.verts:
-                #     le = len(vert.link_edges)
-                #     one_ring_signature = tuple(sorted(len(face.verts) for face in vert.link_faces))
-                #
-                #     if le == 3 and one_ring_signature in ((3, 4, 4), (3, 3, 4)):
-                #         dissolve.append(vert)
-                #         stop = False
-                # bmesh.ops.dissolve_verts(new_bm, verts=dissolve)
-
-                # subdivide_edges = []
-                # for vert in new_bm.verts:
-                #     le = len(vert.link_edges)
-                #     one_ring_signature = tuple(sorted(len(face.verts) for face in vert.link_faces))
-                #
-                #     if le > 5 and one_ring_signature.count(3) > 1:
-                #         longest_edge = max(vert.link_edges,
-                #                            key=lambda e: (e.verts[0].co - e.verts[1].co).length_squared)
-                #         subdivide_edges.append(longest_edge)
-                #         stop = False
-
-                # bmesh.ops.subdivide_edges(new_bm, edges=list(set(subdivide_edges)))
-                bmesh.ops.triangulate(new_bm, faces=new_bm.faces, quad_method="SHORT_EDGE")
-
-                if stop:
-                    break
-
-            bmesh.ops.join_triangles(new_bm, faces=new_bm.faces, angle_face_threshold=sharp_angle,
-                                     angle_shape_threshold=3.14,
-                                     cmp_seam=True)
-
             # ==========================================================================================
 
             # merge_hints = {
@@ -772,14 +749,29 @@ class ParticleRemesh(bpy.types.Operator):
         description="Relaxates points after placement",
         min=0.0001,
         max=2,
-        default=0.5
+        default=1
     )
 
     relaxation_steps: bpy.props.IntProperty(
         name="Relaxation Steps",
         description="Amount of smoothing steps applied to the particles.",
         min=1,
-        default=3
+        default=2
+    )
+
+    repulsion_iterations: bpy.props.IntProperty(
+        name="Repulsion Iterations",
+        description="How many times to repeal particles to keep a uniform distribution",
+        min=0,
+        default=10
+    )
+
+    repulsion_strength: bpy.props.FloatProperty(
+        name="Repulstion_strength",
+        description="How much to repeal particles in each iteration",
+        min=0.00001,
+        max=1.0,
+        default=0.05
     )
 
     resolution: bpy.props.FloatProperty(
@@ -821,7 +813,7 @@ class ParticleRemesh(bpy.types.Operator):
 
     field_resolution: bpy.props.IntProperty(
         name="Field Resolution",
-        description="Maximum amount of verts the guiding field should have.",
+        description="Maximum amount of verts the guiding field should have. Increase to make topology more complex",
         min=100,
         default=8000
     )
@@ -830,9 +822,10 @@ class ParticleRemesh(bpy.types.Operator):
         name="Field Sampling Method",
         description="Precision level of sampling",
         items=[
-            ("EULER", "Euler", "Super fast and simple"),
-            ("MIDPOINT", "Midpoint", "Fast and precise"),
-            ("RUNGE_KUTTA", "Runge-Kutta Order 4", "Slow but super precise")
+            ("EULER", "Euler", "Better suited to simpler meshes, very fast."),
+            ("MIDPOINT", "Midpoint", "General purpose, slightly slower than Euler"),
+            ("RUNGE_KUTTA", "Runge-Kutta Order 4", "Slow but snaps particles to edges and aligns better the topology,"
+                                                   "better suited for preserving sharp features.")
         ],
         default="MIDPOINT"
     )
@@ -848,7 +841,8 @@ class ParticleRemesh(bpy.types.Operator):
 
     field_smoothing_iterations: bpy.props.IntVectorProperty(
         name="Repeat",
-        description="Amount of smoothing iterations for each round,",
+        description="Amount of smoothing iterations for each round, the higher the values, the more smooth"
+                    "the results will be",
         size=3,
         min=0,
         default=(30, 30, 100),
@@ -856,10 +850,11 @@ class ParticleRemesh(bpy.types.Operator):
 
     field_smoothing_depth: bpy.props.IntVectorProperty(
         name="Distance",
-        description="Amount of random walk steps used to average the field for each round.",
+        description="Amount of random walk steps used to average the field for each round, higher values yield less"
+                    "complex curves",
         size=3,
         min=0,
-        default=(100, 5, 0)
+        default=(100, 30, 0)
     )
 
     sharp_angle: bpy.props.FloatProperty(
@@ -887,6 +882,8 @@ class ParticleRemesh(bpy.types.Operator):
 
         layout.prop(self, "particle_relaxation", slider=True)
         layout.prop(self, "relaxation_steps")
+        layout.prop(self, "repulsion_iterations")
+        layout.prop(self, "repulsion_strength")
         layout.prop(self, "field_sampling_method")
         layout.separator()
 
@@ -948,7 +945,7 @@ class ParticleRemesh(bpy.types.Operator):
 
         if self.gp_influence > 0:
             self.particle_manager.field.initialize_from_gp(context)
-            self.particle_manager.field.weights /= self.gp_influence
+            self.particle_manager.field.weights /= max(0.00000001, 1 - self.gp_influence)
             self.particle_manager.field.weights = self.particle_manager.field.weights.clip(0, 1)
             self.particle_manager.gp_spawn_particles(context)
 
@@ -975,17 +972,18 @@ class ParticleRemesh(bpy.types.Operator):
         if len(self.particle_manager.particles) == 0:
             self.particle_manager.curvature_spawn_particles(5)
 
-        for i, _ in enumerate(self.particle_manager.spread_particles(self.relaxation_steps, self.particle_relaxation)):
+        for i, _ in enumerate(
+                self.particle_manager.propagate_particles(self.relaxation_steps, self.particle_relaxation)):
             self.particle_manager.draw_particles(self.relaxation_steps)
             DebugText.lines = [f"Propagating particles {('.', '..', '...')[i % 3]}"]
             yield
 
-        # for i, _ in enumerate(self.particle_manager.repeal_particles(iterations=self.relaxation_steps,
-        #                                                              factor=self.particle_relaxation)):
-        #     self.particle_manager.draw_particles()
-        #     DebugText.lines = ["Particle relaxation:",
-        #                        f"Step {i + 1}"]
-        #     yield
+        for i, _ in enumerate(self.particle_manager.repeal_particles(iterations=self.repulsion_iterations,
+                                                                     factor=self.repulsion_strength)):
+            self.particle_manager.draw_particles()
+            DebugText.lines = ["Particle repulsion:",
+                               f"Step {i + 1}"]
+            yield
 
         for i in range(3):
             if self.mirror_axes[i]:
@@ -1010,7 +1008,7 @@ class ParticleRemesh(bpy.types.Operator):
                 bm.from_mesh(obj.data)
                 if i == 0:
                     straigthen_quad_topology(bm)
-                    # relax_topology(bm)
+                    relax_topology(bm)
                 bvh_snap(bvh, bm.verts)
                 bm.to_mesh(obj.data)
 

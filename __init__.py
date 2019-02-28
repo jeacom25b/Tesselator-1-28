@@ -25,7 +25,7 @@ bl_info = {
     "version": (1, 28, 0),
     "blender": (2, 80, 0),
     "wiki_url": "",
-    "category": "Modeling",
+    "category": "Sculpt",
     "location": "3D view > Properties Panel > Tesselator"}
 
 from .multifile import add_module, register, unregister, import_modules

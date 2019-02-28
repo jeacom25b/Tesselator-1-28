@@ -39,14 +39,29 @@ class TesselatorSettings(bpy.types.PropertyGroup):
         description="Relaxates points after placement",
         min=0.0001,
         max=2,
-        default=0.5
+        default=1
     )
 
     relaxation_steps: bpy.props.IntProperty(
         name="Relaxation Steps",
         description="Amount of smoothing steps applied to the particles.",
         min=1,
-        default=3
+        default=2
+    )
+
+    repulsion_iterations: bpy.props.IntProperty(
+        name="Repulsion Iterations",
+        description="How many times to repeal particles to keep a uniform distribution",
+        min=0,
+        default=10
+    )
+
+    repulsion_strength: bpy.props.FloatProperty(
+        name = "Repulstion_strength",
+        description="How much to repeal particles in each iteration",
+        min = 0.00001,
+        max = 1.0,
+        default = 0.05
     )
 
     resolution: bpy.props.FloatProperty(
@@ -129,7 +144,7 @@ class TesselatorSettings(bpy.types.PropertyGroup):
                     "complex curves",
         size=3,
         min=0,
-        default=(20, 5, 0)
+        default=(100, 30, 0)
     )
 
     sharp_angle: bpy.props.FloatProperty(
@@ -168,6 +183,8 @@ class TESSELATOR_PT_Panel(bpy.types.Panel):
         op.field_sampling_method = settings.field_sampling_method
         op.relaxation_steps = settings.relaxation_steps
         op.particle_relaxation = settings.particle_relaxation
+        op.repulsion_iterations = settings.repulsion_iterations
+        op.repulsion_strength = settings.repulsion_strength
         op.gp_influence = settings.gp_influence
         op.field_resolution = settings.field_resolution
         op.field_smoothing_depth = settings.field_smoothing_depth
@@ -200,6 +217,8 @@ class TESSELATOR_PT_Panel(bpy.types.Panel):
         col = layout.column(align=True)
         col.prop(settings, "relaxation_steps")
         col.prop(settings, "particle_relaxation")
+        col.prop(settings, "repulsion_iterations")
+        col.prop(settings, "repulsion_strength")
         col.separator()
 
         col.label(text="Guiding Fields")
