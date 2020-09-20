@@ -31,7 +31,5 @@ bl_info = {
 from .multifile import add_module, register, unregister, import_modules
 
 add_module("draw_3d")
-add_module("vector_fields")
-add_module("surface_particles")
 add_module("interface")
 import_modules()
