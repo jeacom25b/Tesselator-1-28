@@ -55,7 +55,8 @@ class Field:
         self.field -= self.normals * dot(self.field, self.normals)
         self.field /= norm(self.field)
 
-    def best_combination(self, fa, fb):
+    @staticmethod
+    def best_combination(fa, fb):
         angs = []
         sums = []
 
@@ -72,7 +73,6 @@ class Field:
         best_idx = np.argmax(ang_stack, axis=1)
         return sum_stack[range(n), best_idx]
 
-
     def smooth_field(self, adjacemcy_depth=10):
         selected_adjacency = range(self.n)
         for _ in range(adjacemcy_depth):
@@ -88,3 +88,8 @@ class Field:
 
         self.field = self.best_combination(fa, fb)
         self.reproject()
+
+    def sample(co):
+        loc, normal, index, dist = self.tree.find_nearest(co)
+        field = Vector(self.field[index])
+        return field, normal
