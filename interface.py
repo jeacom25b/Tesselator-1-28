@@ -21,6 +21,9 @@ Created by Jean Da Costa machado
 import bpy
 import math
 from .multifile import register_class, register_function, unregister_function
+from .field import Field
+from .draw_3d import DrawCallback
+from mathutils import Vector
 
 
 class DebugText:
@@ -48,10 +51,51 @@ class TESSELATOR_PT_Panel(bpy.types.Panel):
     def draw(self, context):
         settings = context.scene.tesselator_settings
         layout = self.layout
+        layout.operator('tesselator.remesh')
 
         if DebugText.lines:
             DebugText.draw(layout)
             return
+
+@register_class
+class TESSELATOR_OT_remesh(bpy.types.Operator):
+    bl_idname = 'tesselator.remesh'
+    bl_label = 'Particle Remesh'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def invoke(self, context, event):
+        ob = bpy.context.active_object
+        self.field = Field(ob)
+        self.field.reproject()
+        self.draw = DrawCallback()
+        self.draw.setup_handler()
+
+
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'RET' and event.value == 'PRESS':
+            for _ in range(10):
+                self.field.smooth_field()
+
+            self.draw.clear_data()
+            for v, f in zip(self.field.field, self.field.bm.faces):
+                v = Vector(v)
+                center = f.calc_center_median()
+                self.draw.add_line(center + f.normal * 0.01 + f.normal * 0.01 + v * 0.1, center + f.normal * 0.01)
+
+            self.draw.update_batch()
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'ESC':
+            self.draw.remove_handler()
+            return {'FINISHED'}
+
+        return {'PASS_THROUGH'}
+
+
+
 
 
 @register_function

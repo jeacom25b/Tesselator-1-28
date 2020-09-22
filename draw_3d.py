@@ -72,7 +72,7 @@ void main()
     vec2 coord = gl_PointCoord - vec2(0.5, 0.5);
     fragColor = finalColor;
     fragDepth = 0;
-}   
+}
 """
 
 point_fragment_shader = """
@@ -90,7 +90,7 @@ void main()
     }
     fragColor = finalColor;
     fragDepth = 0;
-}   
+}
 """
 
 
@@ -172,20 +172,13 @@ class DrawCallback:
         self._line_shader.uniform_float("ModelViewProjectionMatrix", matrix)
 
         bgl.glEnable(bgl.GL_MULTISAMPLE)
-
-        if self.blend_mode == BLEND:
-            bgl.glEnable(bgl.GL_BLEND)
-
-        elif self.blend_mode == MULTIPLY_BLEND:
-            bgl.glEnable(bgl.GL_BLEND)
-            bgl.glBlendFunc(bgl.GL_DST_COLOR, bgl.GL_ZERO)
-
-        elif self.blend_mode == ADDITIVE_BLEND:
-            bgl.glEnable(bgl.GL_BLEND)
-            bgl.glBlendFunc(bgl.GL_ONE, bgl.GL_ONE)
+        bgl.glEnable(bgl.GL_BLEND)
 
         if self.draw_on_top:
             bgl.glDisable(bgl.GL_DEPTH_TEST)
+        else:
+            bgl.glEnable(bgl.GL_DEPTH_TEST)
+
 
         bgl.glLineWidth(self.line_width)
         bgl.glPointSize(self.point_size)
@@ -198,6 +191,8 @@ class DrawCallback:
         bgl.glPointSize(1)
         if self.draw_on_top:
             bgl.glEnable(bgl.GL_DEPTH_TEST)
+        else:
+            bgl.glDisable(bgl.GL_DEPTH_TEST)
 
     def _draw(self):
         # This should be called by __call__,
